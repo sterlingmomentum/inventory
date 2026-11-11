@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>LWCI Short Form: developer test page</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 0; padding: 1.5rem; color: #12294D; background: #FAF6EE; max-width: 70rem; }
+  h1 { font-size: 1.4rem; margin: 0 0 0.25rem; } h2 { font-size: 1.1rem; margin: 2rem 0 0.5rem; }
+  .warn { background: #fff3cd; border: 1px solid #e0c46c; padding: 0.6rem 0.9rem; }
+  table { border-collapse: collapse; width: 100%; background: #fff; font-size: 13px; }
+  th, td { border: 1px solid #D5C9B3; padding: 0.4rem 0.5rem; text-align: left; vertical-align: top; }
+  th { background: #142745; color: #fff; }
+  .pass { color: #1b6e3a; font-weight: 700; } .fail { color: #a1281b; font-weight: 700; }
+  textarea { width: 100%; min-height: 10rem; font: 12px/1.4 ui-monospace, monospace; }
+  button { font: inherit; padding: 0.45rem 0.9rem; margin: 0.25rem 0.25rem 0.25rem 0; cursor: pointer; }
+  pre { white-space: pre-wrap; background: #fff; border: 1px solid #D5C9B3; padding: 0.75rem; font-size: 12px; }
+  code { font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>LWCI Short Form: developer test page</h1>
+<p class="warn">For Sterling Momentum and developer testing only. Not linked from the participant page. Shows rule IDs, evidence and review flags, which participants never see. Nothing on this page is sent anywhere.</p>
+<p id="versions"></p>
+
+<h2>1. Content checks</h2>
+<div id="content-checks"></div>
+
+<h2>2. Five synthetic profiles (from runLWCIStressTestsV2 in the v2.2 rules file)</h2>
+<p>Technical assertions are the same seven checks as the Apps Script. Interpretive validity still needs human review. "Open" fills the items the rules do not use with neutral filler (first option for each; Q8 all "Moderate") so the full results page can be viewed.</p>
+<div id="stress"></div>
+
+<h2>3. Paste a profile (for example test-01 or test-02)</h2>
+<p>Paste answers as JSON using the question IDs. Example shape: <code>{"Q9":"Often","Q11":"Sometimes","Q15":"Rarely","Q18":"Very true of me","Q20":"Never","Q27":"Somewhat true of me","CTX1":"No, this period was generally typical for me."}</code>. Missing items are filled with neutral filler. Pasted answers stay in this tab only and are not saved in the code.</p>
+<textarea id="paste" spellcheck="false">{"Q9":"Often","Q11":"Often","Q15":"Sometimes","Q18":"Somewhat true of me","Q20":"Sometimes","Q27":"Slightly true of me","CTX1":"Yes, this period was somewhat different."}</textarea>
+<p>Pre-filled with the Q27 wording check from the Nov 9 instructions.</p>
+<div><button id="run-paste">Evaluate</button><button id="open-paste">Open as results page</button></div>
+<div id="paste-out"></div>
+
+<script src="content/questionnaire.js"></script>
+<script src="content/results-labels.js"></script>
+<script src="content/site-copy.js"></script>
+<script src="rules/feedback-rules-v2.2.js"></script>
+<script>
+(function () {
+  const QN = window.LWCI_QUESTIONNAIRE, LABELS = window.LWCI_RESULTS_LABELS, RULES = window.LWCI_RULES;
+  const KEY = "lwci-short-form-v1";
+  const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  document.getElementById("versions").textContent = "Questionnaire: " + QN.version + " | Rules: " + RULES.version;
+
+  // 1. Content checks
+  const ids = QN.questions.map(q => q.id);
+  const inSections = QN.sections.flatMap(s => s.question_ids);
+  const checks = [
+    ["30 questions, Q1 to Q30 in order", ids.length === 30 && ids.every((id, i) => id === "Q" + (i + 1))],
+    ["Every question has an approved results label", ids.every(id => LABELS[id] && LABELS[id].label)],
+    ["No extra labels beyond Q1 to Q30 (context has no Q31 label)", Object.keys(LABELS).length === 30],
+    ["Sections cover every question and both context items exactly once", inSections.length === 32 && new Set(inSections).size === 32],
+    ["Q8 has five time-of-day rows", (QN.questions[7].rows || []).length === 5],
+    ["Q12 keeps Yes / No / Not sure", JSON.stringify(QN.questions[11].choices) === '["Yes","No","Not sure"]'],
+    ["Q22 has the four revised statements, none starting with a number", QN.questions[21].choices.length === 4 && QN.questions[21].choices.every(c => /^They would say/.test(c))],
+    ["Every choice-type question has choices", QN.questions.every(q => q.choices && q.choices.length >= 2)]
+  ];
+  document.getElementById("content-checks").innerHTML = "<table><tr><th>Check</th><th>Result</th></tr>" +
+    checks.map(([n, ok]) => `<tr><td>${esc(n)}</td><td class="${ok ? "pass" : "fail"}">${ok ? "PASS" : "FAIL"}</td></tr>`).join("") + "</table>";
+
+  // Neutral filler for items the rules do not read
+  function fill(partial) {
+    const a = {};
+    QN.questions.forEach(q => {
+      if (q.type === "energy-grid") { a[q.id] = {}; q.rows.forEach(r => { a[q.id][r] = "Moderate"; }); }
+      else a[q.id] = q.choices[0];
+    });
+    a.Q5 = "3 days"; a.Q6 = "30–44 minutes";
+    a.CTX1 = QN.context_questions[0].choices[0];
+    Object.keys(partial).forEach(k => { if (partial[k] !== "" && partial[k] != null) a[k] = partial[k]; });
+    // The synthetic profiles use a short "No" for context; map it to the full choice.
+    const ctx = QN.context_questions[0].choices;
+    if (!ctx.includes(a.CTX1)) a.CTX1 = /^no\b/i.test(a.CTX1) ? ctx[0] : (ctx.find(c => c.toLowerCase().startsWith(String(a.CTX1).toLowerCase())) || ctx[0]);
+    return a;
+  }
+  function openAsResults(answers) {
+    sessionStorage.setItem(KEY, JSON.stringify({ v: 1, screen: "results", step: 0, answers }));
+    location.href = "index.html";
+  }
+  function fromCase(c) {
+    return { Q9: c.q9, Q11: c.q11, Q15: c.q15, Q18: c.q18, Q20: c.q20, Q27: c.q27, CTX1: c.context };
+  }
+  function resultTable(r) {
+    const rows = [
+      ["Support 1", r.supports[0]], ["Support 2", r.supports[1]],
+      ["Pattern 1", r.patterns[0]], ["Pattern 2", r.patterns[1]]
+    ].map(([n, o]) => `<tr><td>${n}</td><td><b>${esc(o.title)}</b><br>${esc(o.body)}</td></tr>`).join("");
+    return `<table><tr><th>Slot</th><th>Participant-facing text</th></tr>${rows}
+      <tr><td>Question 1</td><td>${esc(r.prompts[0])}</td></tr><tr><td>Question 2</td><td>${esc(r.prompts[1])}</td></tr>
+      <tr><td>Context note</td><td>${esc(r.contextNote) || "<i>none</i>"}</td></tr>
+      <tr><td>Selected rule IDs</td><td><code>${esc(r.dev.selectedIds.join(" | ") || "NONE")}</code></td></tr>
+      <tr><td>All candidates</td><td><code>support: ${esc(r.dev.allSupportIds.join(", ") || "none")}<br>explore: ${esc(r.dev.allExploreIds.join(", ") || "none")}</code></td></tr>
+      <tr><td>Evidence</td><td><code>${esc(r.dev.evidence || "none")}</code></td></tr>
+      <tr><td>Review flags</td><td>${esc(r.dev.flags.join(" | ") || "No automated flags")}</td></tr></table>`;
+  }
+
+  // 2. Stress tests: same seven technical assertions as runLWCIStressTestsV2
+  const cases = RULES.stressCases();
+  let html = "<table><tr><th>Scenario</th><th>Support rules</th><th>Exploration rules</th><th>Context</th><th>Review flags</th><th>Technical assertions</th><th></th></tr>";
+  const details = [];
+  cases.forEach((p, i) => {
+    const raw = RULES.evaluateRaw(p), s = raw.supports, n = raw.explores;
+    const unique = a => new Set(a.map(x => x.theme)).size === a.length;
+    const ok = [s.length <= 2, n.length <= 2, unique(s), unique(n),
+      !raw.supportText.concat(raw.noticeText).some(x => /you have (poor|low|high) capacity/i.test(x)),
+      p.id !== "SYNTH-BLANK" || (s.length === 0 && n.length === 0),
+      p.id !== "SYNTH-CONFLICT" || raw.flags.some(x => x.indexOf("RESTORATION PRACTICES") >= 0)].every(Boolean);
+    html += `<tr><td>${esc(p.id)}</td><td><code>${esc(s.map(x => x.id).join(" | ") || "NONE")}</code></td><td><code>${esc(n.map(x => x.id).join(" | ") || "NONE")}</code></td><td>${esc(raw.context)}</td><td>${esc(raw.flags.join(" | ") || "None")}</td><td class="${ok ? "pass" : "fail"}">${ok ? "PASS (technical checks only)" : "REVIEW (technical check failed)"}</td><td>${p.id === "SYNTH-BLANK" ? "<i>blank inputs; filler would change it</i>" : `<button data-open="${i}">Open</button>`}</td></tr>`;
+    details.push(`<h3>${esc(p.id)}</h3>` + resultTable(RULES.evaluate(fromCase(p))));
+  });
+  document.getElementById("stress").innerHTML = html + "</table>" + details.join("");
+  document.getElementById("stress").addEventListener("click", e => {
+    const i = e.target.getAttribute("data-open");
+    if (i !== null) openAsResults(fill(fromCase(cases[+i])));
+  });
+
+  // 3. Paste
+  function parsePaste() {
+    try { return JSON.parse(document.getElementById("paste").value || "{}"); }
+    catch (e) { document.getElementById("paste-out").innerHTML = `<p class="fail">Not valid JSON: ${esc(e.message)}</p>`; return null; }
+  }
+  document.getElementById("run-paste").addEventListener("click", () => {
+    const p = parsePaste(); if (!p) return;
+    document.getElementById("paste-out").innerHTML = resultTable(RULES.evaluate(p));
+  });
+  document.getElementById("open-paste").addEventListener("click", () => {
+    const p = parsePaste(); if (p) openAsResults(fill(p));
+  });
+})();
+</script>
+</body>
+</html>
